@@ -34,6 +34,9 @@ export function formatTrackCaption(track, episode) {
   if (track.status) {
     caption += `⏱️ مشخصات: <code>${track.status}</code>\n`;
   }
+  if (track.contributor) {
+    caption += `❤️ ارسال‌شده توسط: <b>${track.contributor}</b>\n`;
+  }
   caption += `\n📢 کانال: @MyLeitner\n`;
   caption += `🤖 ربات: @Playlist_podcast_bot`;
   return caption;

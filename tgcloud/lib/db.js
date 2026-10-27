@@ -152,8 +152,12 @@ export async function getTrackByMid(trackMid) {
   return db.select().from(tracks).where(eq(tracks.mid, trackMid)).get();
 }
 
-export async function updateTrackFileId(trackMid, fileId) {
-  await db.update(tracks).set({ fileId }).where(eq(tracks.mid, trackMid)).run();
+export async function updateTrackFileId(trackMid, fileId, contributor = null) {
+  const patch = { fileId };
+  if (contributor) {
+    patch.contributor = contributor;
+  }
+  await db.update(tracks).set(patch).where(eq(tracks.mid, trackMid)).run();
 }
 
 export async function getRandomTracksByTag(tagKey, limit = 5) {

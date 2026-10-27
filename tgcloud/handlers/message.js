@@ -71,13 +71,14 @@ export default async function (message) {
     const isFromChannel = fwdChannel.toLowerCase().includes('playlistpodca');
     const isAdmin = user.isAdmin || from.id === ADMIN_ID;
 
+    const contributor = from.username ? `@${from.username}` : (from.first_name || 'کاربر گرامی');
     let matched = false;
     let trackTitle = audioTitle;
 
     // A) If forwarded from the podcast channel, ANY user or admin can trigger cache
     if (fwdMid) {
       try {
-        await updateTrackFileId(fwdMid, fileId);
+        await updateTrackFileId(fwdMid, fileId, contributor);
         matched = true;
       } catch {}
     }
@@ -87,7 +88,7 @@ export default async function (message) {
       try {
         const { tracks: foundTracks } = await searchContent(audioTitle, 1);
         if (foundTracks && foundTracks.length > 0) {
-          await updateTrackFileId(foundTracks[0].mid, fileId);
+          await updateTrackFileId(foundTracks[0].mid, fileId, contributor);
           matched = true;
           trackTitle = foundTracks[0].title;
         }
@@ -97,7 +98,7 @@ export default async function (message) {
     if (matched) {
       await api.sendMessage({
         chat_id: chat.id,
-        text: `⚡ <b>فایل کش شد:</b> <code>${trackTitle}</code>\n✅ شناسه تلگرام ذخیره شد و اکنون مستقیماً با تگ @MyLeitner ارسال می‌شود.`,
+        text: `⚡ <b>فایل کش شد:</b> <code>${trackTitle}</code>\n\n❤️ دمت گرم! آیدی <b>${contributor}</b> به عنوان تکمیل‌کننده این قطعه در آرشیو ثبت شد و در کپشن آهنگ برای همه نمایش داده می‌شود.`,
         parse_mode: 'HTML',
       });
     } else if (isAdmin) {

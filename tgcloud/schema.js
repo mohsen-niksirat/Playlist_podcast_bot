@@ -27,14 +27,15 @@ export const episodes = table('episodes', {
 }));
 
 export const tracks = table('tracks', {
-  id:         integer('id').primaryKey({ autoIncrement: true }),
-  mid:        integer('mid').unique().notNull(), // Telegram message id in channel
-  episodeMid: integer('episode_mid').notNull(),
-  title:      text('title').notNull(),
-  status:     text('status'), // e.g. "04:17, 9.8 MB"
-  tags:       text('tags'), // comma-separated tags
-  fileId:     text('file_id'), // Telegram cached file_id
-  orderIndex: integer('order_index').default(0),
+  id:          integer('id').primaryKey({ autoIncrement: true }),
+  mid:         integer('mid').unique().notNull(), // Telegram message id in channel
+  episodeMid:  integer('episode_mid').notNull(),
+  title:       text('title').notNull(),
+  status:      text('status'), // e.g. "04:17, 9.8 MB"
+  tags:        text('tags'), // comma-separated tags
+  fileId:      text('file_id'), // Telegram cached file_id
+  contributor: text('contributor'), // contributor @username or name
+  orderIndex:  integer('order_index').default(0),
 }, (t) => ({
   midIdx:   index('idx_tracks_mid').on(t.mid),
   epMidIdx: index('idx_tracks_ep_mid').on(t.episodeMid),
