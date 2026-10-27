@@ -36,6 +36,7 @@ import {
   formatMyLeitnerChannel,
   formatStats,
   formatLinks,
+  escapeHtml,
 } from 'lib/formatters';
 
 export default async function (message) {
@@ -114,9 +115,9 @@ export default async function (message) {
         chat_id: chat.id,
         text:
           `🎉 <b>اپیزود ${epRes.isNew ? 'جدید با موفقیت اضافه' : 'به‌روزرسانی'} شد!</b>\n\n` +
-          `🎙️ اپیزود: <b>«${epRes.episode.title}»</b> (قسمت ${epRes.episode.orderIndex})\n` +
+          `🎙️ اپیزود: <b>«${escapeHtml(epRes.episode.title)}»</b> (قسمت ${epRes.episode.orderIndex})\n` +
           `🔗 کست‌باکس: ${castboxUrl || 'ثبت نشده'}\n` +
-          `🏷️ تگ‌ها: <code>${matchedTags.join(', ')}</code>\n\n` +
+          `🏷️ تگ‌ها: <code>${escapeHtml(matchedTags.join(', '))}</code>\n\n` +
           `👇 <b>مرحله بعد:</b> آهنگ‌های این اپیزود را از کانال فوروارد کنید تا خودکار به این قسمت اضافه و کش شوند!`,
         parse_mode: 'HTML',
       });
@@ -131,7 +132,7 @@ export default async function (message) {
     const audioTitle = audio.title || audio.file_name || '';
     const contributor = from.username ? `@${from.username}` : (from.first_name || 'کاربر گرامی');
 
-    let matched = false;
+    let res = null;
     let trackTitle = audioTitle;
     let addedToEp = null;
 
@@ -145,7 +146,7 @@ export default async function (message) {
           ? `, ${(audio.file_size / (1024 * 1024)).toFixed(1)} MB`
           : '';
 
-        const res = await addOrUpdateTrack({
+        res = await addOrUpdateTrack({
           mid: fwdMid,
           title: audioTitle,
           status: durationStr ? `${durationStr}${sizeStr}` : '',
@@ -153,40 +154,80 @@ export default async function (message) {
           contributor,
         });
 
-        matched = true;
-        if (res.isNew && res.episode) {
-          addedToEp = res.episode;
+        if (res) {
+          if (res.track && res.track.title) {
+            trackTitle = res.track.title;
+          }
+          if (res.isNew && res.episode) {
+            addedToEp = res.episode;
+          }
         }
-      } catch {}
+      } catch (err) {
+        console.error('addOrUpdateTrack error:', err);
+      }
     }
 
     // B) If not matched by forward_id, allow Admin to match by title
-    if (!matched && audioTitle && (isAdmin || isFromChannel)) {
+    if (!res && audioTitle && (isAdmin || isFromChannel)) {
       try {
         const { tracks: foundTracks } = await searchContent(audioTitle, 1);
         if (foundTracks && foundTracks.length > 0) {
-          await updateTrackFileId(foundTracks[0].mid, fileId, contributor);
-          matched = true;
-          trackTitle = foundTracks[0].title;
+          res = await updateTrackFileId(foundTracks[0].mid, fileId, contributor);
+          if (res && res.track && res.track.title) {
+            trackTitle = res.track.title;
+          }
         }
-      } catch {}
+      } catch (err) {
+        console.error('updateTrackFileId error:', err);
+      }
     }
 
-    if (matched) {
+    if (res) {
+      const safeTrackTitle = escapeHtml(trackTitle);
+      const safeContributor = escapeHtml(contributor);
+
       if (addedToEp) {
         await api.sendMessage({
           chat_id: chat.id,
           text:
-            `✨ <b>آهنگ جدید به اپیزود «${addedToEp.title}» اضافه و کش شد!</b>\n\n` +
-            `🎵 عنوان: <code>${trackTitle}</code>\n` +
-            `❤️ حامی: <b>${contributor}</b>\n` +
+            `✨ <b>آهنگ جدید به اپیزود «${escapeHtml(addedToEp.title)}» اضافه و کش شد!</b>\n\n` +
+            `🎵 عنوان: <code>${safeTrackTitle}</code>\n` +
+            `❤️ حامی: <b>${safeContributor}</b>\n` +
             `📊 تعداد قطعات این اپیزود: <b>${addedToEp.trackCount + 1} آهنگ</b>`,
           parse_mode: 'HTML',
         });
+      } else if (res.wasAlreadyCached && res.originalContributor && !res.contributorSaved) {
+        // Track was already cached with an original contributor
+        const safeOriginal = escapeHtml(res.originalContributor);
+        if (res.originalContributor === contributor) {
+          await api.sendMessage({
+            chat_id: chat.id,
+            text:
+              `💡 <b>این قطعه قبلاً توسط خود شما ثبت و کش شده بود!</b>\n\n` +
+              `🎵 عنوان: <code>${safeTrackTitle}</code>\n` +
+              `❤️ ثبت‌شده با نام کاربری شما: <b>${safeContributor}</b>\n\n` +
+              `پرچم بالاست! ممنون از حضور و همراهی پرانرژیت در آرشیو 🎧✨`,
+            parse_mode: 'HTML',
+          });
+        } else {
+          await api.sendMessage({
+            chat_id: chat.id,
+            text:
+              `💡 <b>این قطعه قبلاً در آرشیو کش شده است!</b>\n\n` +
+              `🎵 عنوان: <code>${safeTrackTitle}</code>\n` +
+              `👑 اولین ثبت‌کننده (حامی اثر): <b>${safeOriginal}</b>\n\n` +
+              `دمت گرم رفیق! با اینکه اعتبار این قطعه متعلق به اولین ارسال‌کننده (<b>${safeOriginal}</b>) است، ولی مشارکت شما برای ما بی‌نهایت ارزشمنده! 🌟\n` +
+              `<i>پیشنهاد: آهنگ‌های جدیدتر یا بدون کش را فوروارد کنید تا تگ شما ثبت شود!</i> 😉`,
+            parse_mode: 'HTML',
+          });
+        }
       } else {
+        // First contributor!
         await api.sendMessage({
           chat_id: chat.id,
-          text: `⚡ <b>فایل کش شد:</b> <code>${trackTitle}</code>\n\n❤️ دمت گرم! آیدی <b>${contributor}</b> به عنوان تکمیل‌کننده این قطعه در آرشیو ثبت شد و در کپشن آهنگ برای همه نمایش داده می‌شود.`,
+          text:
+            `⚡ <b>فایل با موفقیت کش شد:</b> <code>${safeTrackTitle}</code>\n\n` +
+            `❤️ <b>دمت گرم!</b> آیدی شما <b>${safeContributor}</b> به عنوان اولین حامی این قطعه در آرشیو ثبت شد و برای همیشه در کپشن آهنگ برای همه کاربران نمایش داده می‌شود. 🌟🎧`,
           parse_mode: 'HTML',
         });
       }
@@ -194,6 +235,12 @@ export default async function (message) {
       await api.sendMessage({
         chat_id: chat.id,
         text: `⚠️ فایل صوتی دریافت شد، اما در لیست قطعات تطبیق داده نشد.\n<i>پیشنهاد: آهنگ را مستقیماً از کانال @Playlistpodcas فوروارد فرمایید.</i>`,
+        parse_mode: 'HTML',
+      });
+    } else {
+      await api.sendMessage({
+        chat_id: chat.id,
+        text: `⚠️ ممنون از ارسال فایل صوتی!\nاما این قطعه در لیست پادکست پلی‌لیست پیدا نشد. لطفاً آهنگ‌ها را مستقیماً از کانال اصلی (@Playlistpodcas) فوروارد نمایید.`,
         parse_mode: 'HTML',
       });
     }
@@ -383,11 +430,12 @@ export default async function (message) {
   if (user.state === 'search' || (!text.startsWith('/') && text.length >= 2)) {
     const { episodes: foundEps, tracks: foundTracks } = await searchContent(text, 12);
     const totalFound = foundEps.length + foundTracks.length;
+    const safeQuery = escapeHtml(text);
 
     if (totalFound === 0) {
       await api.sendMessage({
         chat_id: chat.id,
-        text: `🔍 موردی برای عبارت «<b>${text}</b>» پیدا نشد.\n\nلطفاً کلمه کلیدی دیگری (بخشی از نام اپیزود یا خواننده یا آهنگ) را ارسال فرمایید:`,
+        text: `🔍 موردی برای عبارت «<b>${safeQuery}</b>» پیدا نشد.\n\nلطفاً کلمه کلیدی دیگری (بخشی از نام اپیزود یا خواننده یا آهنگ) را ارسال فرمایید:`,
         parse_mode: 'HTML',
         reply_markup: backToMenuKeyboard(),
       });
@@ -395,7 +443,7 @@ export default async function (message) {
     }
 
     await setUserState(from.id, 'idle');
-    let summaryText = `🎯 <b>نتایج جستجو برای: «${text}»</b>\n\n`;
+    let summaryText = `🎯 <b>نتایج جستجو برای: «${safeQuery}»</b>\n\n`;
     if (foundEps.length > 0) {
       summaryText += `🎙️ <b>اپیزودها (${foundEps.length}):</b>\n`;
     }

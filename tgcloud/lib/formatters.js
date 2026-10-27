@@ -1,8 +1,21 @@
 import { TAGS } from 'lib/db';
 
+/**
+ * Escapes characters that violate Telegram HTML parse_mode (&, <, >).
+ * Protects against 400 Bad Request errors on tracks or users with special characters.
+ */
+export function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 export function formatWelcome(name) {
+  const safeName = escapeHtml(name || 'عزیز');
   return (
-    `سلام ${name || 'عزیز'}! 🎧\n\n` +
+    `سلام ${safeName}! 🎧\n\n` +
     `به ربات آرشیو <b>پادکست «پلی لیست» (Playlist)</b> خوش آمدید.\n\n` +
     `مجموعه‌ای از بهترین موسیقی‌های گلچین‌شده در سبک‌ها و حس‌وحال‌های مختلف به تهیه‌کنندگی مختار رزمجو.\n\n` +
     `🎙️ <b>۳۱۴ اپیزود پادکست</b>\n` +
@@ -13,8 +26,9 @@ export function formatWelcome(name) {
 }
 
 export function formatEpisodeCard(ep, trackCount) {
+  const safeTitle = escapeHtml(ep.title || 'بدون عنوان');
   let text = `🎙️ <b>پادکست پلی‌لیست — اپیزود ${ep.orderIndex}</b>\n`;
-  text += `🔥 عنوان: <b>«${ep.title}»</b>\n\n`;
+  text += `🔥 عنوان: <b>«${safeTitle}»</b>\n\n`;
   text += `🎼 تعداد قطعات این اپیزود: <b>${trackCount} آهنگ</b>\n`;
   if (ep.castboxUrl && ep.castboxUrl.startsWith('http')) {
     text += `🔗 کست‌باکس: <a href="${ep.castboxUrl}">شنیدن کامل در Castbox</a>\n`;
@@ -24,18 +38,20 @@ export function formatEpisodeCard(ep, trackCount) {
 }
 
 export function formatTrackCaption(track, episode) {
-  let caption = `🎵 <b>${track.title || 'قطعه موسیقی'}</b>\n`;
+  const safeTitle = escapeHtml(track.title || 'قطعه موسیقی');
+  let caption = `🎵 <b>${safeTitle}</b>\n`;
   if (episode) {
-    caption += `🎙️ اپیزود: <b>«${episode.title}»</b> (قسمت ${episode.orderIndex})\n`;
+    const safeEpTitle = escapeHtml(episode.title || '');
+    caption += `🎙️ اپیزود: <b>«${safeEpTitle}»</b> (قسمت ${episode.orderIndex})\n`;
     if (episode.castboxUrl && episode.castboxUrl.startsWith('http')) {
       caption += `🔗 <a href="${episode.castboxUrl}">شنیدن پادکست در Castbox</a>\n`;
     }
   }
   if (track.status) {
-    caption += `⏱️ مشخصات: <code>${track.status}</code>\n`;
+    caption += `⏱️ مشخصات: <code>${escapeHtml(track.status)}</code>\n`;
   }
   if (track.contributor) {
-    caption += `❤️ ارسال‌شده توسط: <b>${track.contributor}</b>\n`;
+    caption += `❤️ ارسال‌شده توسط: <b>${escapeHtml(track.contributor)}</b>\n`;
   }
   caption += `\n📢 کانال: @MyLeitner\n`;
   caption += `🤖 ربات: @Playlist_podcast_bot`;
@@ -43,12 +59,14 @@ export function formatTrackCaption(track, episode) {
 }
 
 export function formatTrackFallback(track, episode) {
-  let text = `🎵 <b>${track.title || 'قطعه موسیقی'}</b>\n`;
+  const safeTitle = escapeHtml(track.title || 'قطعه موسیقی');
+  let text = `🎵 <b>${safeTitle}</b>\n`;
   if (episode) {
-    text += `🎙️ متعلق به اپیزود: <b>«${episode.title}»</b> (قسمت ${episode.orderIndex})\n`;
+    const safeEpTitle = escapeHtml(episode.title || '');
+    text += `🎙️ متعلق به اپیزود: <b>«${safeEpTitle}»</b> (قسمت ${episode.orderIndex})\n`;
   }
   if (track.status) {
-    text += `⏱️ مشخصات: <code>${track.status}</code>\n`;
+    text += `⏱️ مشخصات: <code>${escapeHtml(track.status)}</code>\n`;
   }
   text += `\n👇 <i>با دکمه زیر می‌توانید این آهنگ را مستقیماً در کانال تلگرام بشنوید:</i>\n\n📢 کانال: @MyLeitner`;
   return text;
@@ -56,7 +74,7 @@ export function formatTrackFallback(track, episode) {
 
 export function formatTagHeader(tagKey) {
   const tObj = TAGS.find((t) => t.key === tagKey);
-  const title = tObj ? `${tObj.icon} ${tObj.name}` : 'این سبک';
+  const title = tObj ? `${tObj.icon} ${escapeHtml(tObj.name)}` : 'این سبک';
   return (
     `🎧 <b>پیشنهاد تصادفی قطعات — ${title}</b>\n\n` +
     `تعدادی قطعه گلچین شده از این سبک برای شما انتخاب شد. با لمس هر کدام می‌توانید آن را دریافت کنید:`

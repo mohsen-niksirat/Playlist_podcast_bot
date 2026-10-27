@@ -32,6 +32,7 @@ import {
   formatInlinePanel,
   formatStats,
   formatLinks,
+  escapeHtml,
 } from 'lib/formatters';
 
 export default async function (query) {
@@ -492,13 +493,13 @@ export default async function (query) {
     }
 
     if (directLinks.length > 0) {
-      let listMsg = `📥 <b>قطعات اپیزود «${ep.title}» در تلگرام:</b>\n\n`;
+      let listMsg = `📥 <b>قطعات اپیزود «${escapeHtml(ep.title)}» در تلگرام:</b>\n\n`;
       listMsg += `برای شنیدن یا دانلود هر آهنگ، روی لینک مربوط به آن کلیک کنید:\n\n`;
 
       for (const item of directLinks) {
-        listMsg += `🎵 ${item.order}. <a href="https://t.me/Playlistpodcas/${item.mid}"><b>${item.title}</b></a>\n`;
+        listMsg += `🎵 ${item.order}. <a href="https://t.me/Playlistpodcas/${item.mid}"><b>${escapeHtml(item.title)}</b></a>\n`;
         if (item.status) {
-          listMsg += `   ⏱️ <code>${item.status}</code>\n`;
+          listMsg += `   ⏱️ <code>${escapeHtml(item.status)}</code>\n`;
         }
       }
 

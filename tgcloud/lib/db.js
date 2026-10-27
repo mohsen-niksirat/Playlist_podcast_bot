@@ -50,7 +50,13 @@ export async function getUser(tgId) {
   return db.select().from(users).where(eq(users.tgId, tgId)).get();
 }
 
+let isDbSeeded = false;
+
 export async function seedDatabaseIfNeeded(forceRefresh = false) {
+  if (isDbSeeded && !forceRefresh) {
+    return { seeded: false };
+  }
+
   const row = await db.select({ count: sql`count(*)` }).from(episodes).get();
   const currentCount = row ? Number(row.count) : 0;
 
@@ -64,6 +70,7 @@ export async function seedDatabaseIfNeeded(forceRefresh = false) {
   }
 
   if (currentCount >= SEED_EPISODES.length && !forceRefresh && !needsTitleUpdate) {
+    isDbSeeded = true;
     return { seeded: false, count: currentCount };
   }
 
@@ -109,6 +116,7 @@ export async function seedDatabaseIfNeeded(forceRefresh = false) {
     await db.insert(tracks).values(chunk).run();
   }
 
+  isDbSeeded = true;
   return { seeded: true, episodes: SEED_EPISODES.length, tracks: allTracks.length };
 }
 
@@ -153,11 +161,25 @@ export async function getTrackByMid(trackMid) {
 }
 
 export async function updateTrackFileId(trackMid, fileId, contributor = null) {
+  const existing = await db.select().from(tracks).where(eq(tracks.mid, trackMid)).get();
+  if (!existing) return null;
+
   const patch = { fileId };
-  if (contributor) {
+  let contributorSaved = false;
+  // First-come-first-served: only save contributor if not already credited
+  if (contributor && !existing.contributor) {
     patch.contributor = contributor;
+    contributorSaved = true;
   }
   await db.update(tracks).set(patch).where(eq(tracks.mid, trackMid)).run();
+
+  return {
+    isNew: false,
+    track: existing,
+    wasAlreadyCached: Boolean(existing.fileId),
+    originalContributor: existing.contributor,
+    contributorSaved,
+  };
 }
 
 export async function addOrUpdateEpisode({ mid, title, castboxUrl = '', tags = '' }) {
@@ -190,9 +212,20 @@ export async function addOrUpdateTrack({ mid, title, status = '', fileId = null,
   const existing = await db.select().from(tracks).where(eq(tracks.mid, mid)).get();
   if (existing) {
     const patch = { fileId: fileId || existing.fileId };
-    if (contributor) patch.contributor = contributor;
+    let contributorSaved = false;
+    // First-come-first-served: only save contributor if not already credited
+    if (contributor && !existing.contributor) {
+      patch.contributor = contributor;
+      contributorSaved = true;
+    }
     await db.update(tracks).set(patch).where(eq(tracks.mid, mid)).run();
-    return { isNew: false, track: existing };
+    return {
+      isNew: false,
+      track: existing,
+      wasAlreadyCached: Boolean(existing.fileId),
+      originalContributor: existing.contributor,
+      contributorSaved,
+    };
   }
 
   // Find latest episode to attach to
@@ -223,7 +256,14 @@ export async function addOrUpdateTrack({ mid, title, status = '', fileId = null,
       .run();
   }
 
-  return { isNew: true, track: created, episode: latestEp };
+  return {
+    isNew: true,
+    track: created,
+    episode: latestEp,
+    wasAlreadyCached: false,
+    originalContributor: null,
+    contributorSaved: Boolean(contributor),
+  };
 }
 
 export async function getRandomTracksByTag(tagKey, limit = 5) {
