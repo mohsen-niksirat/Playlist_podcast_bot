@@ -160,6 +160,101 @@ export async function getTrackByMid(trackMid) {
   return db.select().from(tracks).where(eq(tracks.mid, trackMid)).get();
 }
 
+/**
+ * Smart track matcher: Fingerprints audio by MID, Artist, Title, Duration, and File Size.
+ * Enables automatic caching even when posts were forwarded from a personal chat (e.g. Mokhtar Razmjoo)
+ * or when Telegram strips the forward_from_message_id.
+ */
+export async function findMatchingTrack({ mid, performer, title, fileName, duration, fileSize }) {
+  // 1. Direct MID match if forwarded directly from channel
+  if (mid) {
+    const direct = await db.select().from(tracks).where(eq(tracks.mid, mid)).get();
+    if (direct) return direct;
+  }
+
+  // 2. Format duration and size fingerprints
+  const durM = Math.floor((duration || 0) / 60);
+  const durS = String((duration || 0) % 60).padStart(2, '0');
+  const durStr1 = `${String(durM).padStart(2, '0')}:${durS}`; // e.g. "04:29"
+  const durStr2 = `${durM}:${durS}`;                           // e.g. "4:29"
+  const sizeMb = fileSize ? `${(fileSize / (1024 * 1024)).toFixed(1)} MB` : '';
+
+  const perfClean = (performer || '').trim();
+  const titleClean = (title || '').trim();
+  const fileClean = (fileName || '').replace(/\.[^/.]+$/, '').trim();
+
+  // 3. Search database for candidates
+  let candidates = [];
+  if (perfClean && titleClean) {
+    candidates = await db
+      .select()
+      .from(tracks)
+      .where(and(like(tracks.title, `%${perfClean}%`), like(tracks.title, `%${titleClean}%`)))
+      .all();
+  }
+
+  if (candidates.length === 0 && (titleClean || fileClean)) {
+    const q = titleClean || fileClean;
+    if (q.length >= 2) {
+      candidates = await db
+        .select()
+        .from(tracks)
+        .where(like(tracks.title, `%${q}%`))
+        .all();
+    }
+  }
+
+  if (candidates.length === 0 && perfClean && perfClean.length >= 2) {
+    candidates = await db
+      .select()
+      .from(tracks)
+      .where(like(tracks.title, `%${perfClean}%`))
+      .all();
+  }
+
+  if (candidates.length === 0) return null;
+
+  // 4. Score candidates
+  const scored = candidates.map((t) => {
+    let score = 0;
+    const tTitle = (t.title || '').toLowerCase();
+    const tStatus = t.status || '';
+
+    // Duration match (+50)
+    if (duration && (tStatus.includes(durStr1) || tStatus.includes(durStr2))) {
+      score += 50;
+    }
+    // File size match (+30)
+    if (sizeMb && tStatus.includes(sizeMb)) {
+      score += 30;
+    }
+    // Exact or combined title match (+20)
+    const combined1 = `${perfClean} – ${titleClean}`.toLowerCase();
+    const combined2 = `${perfClean} - ${titleClean}`.toLowerCase();
+    if (perfClean && titleClean && (tTitle === combined1 || tTitle === combined2)) {
+      score += 20;
+    } else if (titleClean && tTitle.includes(titleClean.toLowerCase())) {
+      score += 10;
+    }
+    // Uncached preference: if not cached yet, prefer caching it (+5)
+    if (!t.fileId) {
+      score += 5;
+    }
+    // Recency tie-breaker
+    score += (t.mid || 0) / 100000;
+
+    return { track: t, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  // Require at least 25 points to guarantee precision
+  if (best && best.score >= 25) {
+    return best.track;
+  }
+  return null;
+}
+
 export async function updateTrackFileId(trackMid, fileId, contributor = null) {
   const existing = await db.select().from(tracks).where(eq(tracks.mid, trackMid)).get();
   if (!existing) return null;

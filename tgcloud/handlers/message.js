@@ -7,6 +7,7 @@ import {
   updateTrackFileId,
   addOrUpdateEpisode,
   addOrUpdateTrack,
+  findMatchingTrack,
   searchContent,
   getEpisodes,
   getRandomEpisode,
@@ -69,7 +70,23 @@ export default async function (message) {
     (message.forward_origin && message.forward_origin.chat && message.forward_origin.chat.username) ||
     '';
 
-  const isFromChannel = fwdChannel.toLowerCase().includes('playlistpodca');
+  const captionLower = (message.caption || '').toLowerCase();
+
+  const fwdSender =
+    (message.forward_from && `${message.forward_from.first_name || ''} ${message.forward_from.username || ''}`) ||
+    (message.forward_origin && message.forward_origin.sender_user && `${message.forward_origin.sender_user.first_name || ''} ${message.forward_origin.sender_user.username || ''}`) ||
+    (message.forward_origin && message.forward_origin.sender_user_name) ||
+    '';
+
+  const isFromMokhtar =
+    fwdSender.toLowerCase().includes('mokhtar') ||
+    fwdSender.toLowerCase().includes('razmjoo') ||
+    fwdSender.toLowerCase().includes('playlist');
+
+  const isFromChannel =
+    fwdChannel.toLowerCase().includes('playlistpodca') ||
+    captionLower.includes('playlistpodca') ||
+    isFromMokhtar;
 
   // 1. Admin Feature: Add New Episode by forwarding announcement post from channel
   if (isAdmin && fwdMid && !message.audio) {
@@ -136,8 +153,24 @@ export default async function (message) {
     let trackTitle = audioTitle;
     let addedToEp = null;
 
-    // A) If forwarded from the podcast channel, ANY user or admin can trigger cache / add
-    if (fwdMid) {
+    // A) Smart Multi-Factor Matcher (Fingerprints by Title, Artist, Duration, Size, and MID)
+    // Matches accurately even if forwarded from personal chats (e.g. Mokhtar Razmjoo PV)
+    const matchedTrack = await findMatchingTrack({
+      mid: fwdMid,
+      performer: audio.performer,
+      title: audio.title,
+      fileName: audio.file_name,
+      duration: audio.duration,
+      fileSize: audio.file_size,
+    });
+
+    if (matchedTrack) {
+      res = await updateTrackFileId(matchedTrack.mid, fileId, contributor);
+      if (res && res.track && res.track.title) {
+        trackTitle = res.track.title;
+      }
+    } else if (fwdMid && (isAdmin || isFromChannel)) {
+      // B) If it's a new track from channel/admin not in the seed archive
       try {
         const durationStr = audio.duration
           ? `${Math.floor(audio.duration / 60)}:${String(audio.duration % 60).padStart(2, '0')}`
@@ -146,9 +179,11 @@ export default async function (message) {
           ? `, ${(audio.file_size / (1024 * 1024)).toFixed(1)} MB`
           : '';
 
+        const fullTitle = audio.performer && audio.title ? `${audio.performer} – ${audio.title}` : audioTitle;
+
         res = await addOrUpdateTrack({
           mid: fwdMid,
-          title: audioTitle,
+          title: fullTitle,
           status: durationStr ? `${durationStr}${sizeStr}` : '',
           fileId,
           contributor,
@@ -164,21 +199,6 @@ export default async function (message) {
         }
       } catch (err) {
         console.error('addOrUpdateTrack error:', err);
-      }
-    }
-
-    // B) If not matched by forward_id, allow Admin to match by title
-    if (!res && audioTitle && (isAdmin || isFromChannel)) {
-      try {
-        const { tracks: foundTracks } = await searchContent(audioTitle, 1);
-        if (foundTracks && foundTracks.length > 0) {
-          res = await updateTrackFileId(foundTracks[0].mid, fileId, contributor);
-          if (res && res.track && res.track.title) {
-            trackTitle = res.track.title;
-          }
-        }
-      } catch (err) {
-        console.error('updateTrackFileId error:', err);
       }
     }
 
