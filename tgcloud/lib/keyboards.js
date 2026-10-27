@@ -82,7 +82,8 @@ export function mainReplyKeyboard() {
       ],
     ],
     resize_keyboard: true,
-    is_persistent: true,
+    is_persistent: false,
+    input_field_placeholder: 'انتخاب گزینه یا جستجوی آهنگ...',
   };
 }
 
