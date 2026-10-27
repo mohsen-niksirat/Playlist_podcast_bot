@@ -5,12 +5,15 @@ import {
   seedDatabaseIfNeeded,
   getStats,
   updateTrackFileId,
+  addOrUpdateEpisode,
+  addOrUpdateTrack,
   searchContent,
   getEpisodes,
   getRandomEpisode,
   getRandomTrack,
   getEpisodeByMid,
   ADMIN_ID,
+  TAGS,
 } from 'lib/db';
 import {
   mainMenuKeyboard,
@@ -21,6 +24,7 @@ import {
   developerKeyboard,
   inlinePanelKeyboard,
   trackDeliveryKeyboard,
+  myLeitnerKeyboard,
   backToMenuKeyboard,
 } from 'lib/keyboards';
 import {
@@ -29,6 +33,7 @@ import {
   formatInlinePanel,
   formatTrackCaption,
   formatTrackFallback,
+  formatMyLeitnerChannel,
   formatStats,
   formatLinks,
 } from 'lib/formatters';
@@ -49,37 +54,109 @@ export default async function (message) {
   }
 
   const { user } = await getOrCreateUser(from);
+  const isAdmin = user.isAdmin || from.id === ADMIN_ID;
 
-  // 1. Handle incoming/forwarded audio (File_ID caching)
+  // Support both legacy and modern Bot API 7.0+ forward fields
+  const fwdMid =
+    message.forward_from_message_id ||
+    (message.forward_origin && message.forward_origin.type === 'channel'
+      ? message.forward_origin.message_id
+      : null);
+
+  const fwdChannel =
+    (message.forward_from_chat && message.forward_from_chat.username) ||
+    (message.forward_origin && message.forward_origin.chat && message.forward_origin.chat.username) ||
+    '';
+
+  const isFromChannel = fwdChannel.toLowerCase().includes('playlistpodca');
+
+  // 1. Admin Feature: Add New Episode by forwarding announcement post from channel
+  if (isAdmin && fwdMid && !message.audio) {
+    const isEpPost =
+      text.includes('پلی لیست') ||
+      text.includes('پلی‌لیست') ||
+      text.includes('اپیزود') ||
+      text.includes('قسمت') ||
+      text.toLowerCase().includes('castbox');
+
+    if (isEpPost) {
+      let epTitle = '';
+      const mQuote = text.match(/["«“]([\s\S]+?)["»”]/);
+      if (mQuote && mQuote[1].trim().length >= 2) {
+        epTitle = mQuote[1].trim().replace(/\s+/g, ' ');
+      } else {
+        const firstLine = text.split('\n')[0].replace(/[🔥📌✨🎙️"«»”]/g, '').trim();
+        epTitle = firstLine.slice(0, 40) || 'اپیزود جدید';
+      }
+
+      // Extract castbox url if present
+      const cbMatch = text.match(/https?:\/\/castbox\.fm\/[^\s\n]+/i);
+      const castboxUrl = cbMatch ? cbMatch[0] : '';
+
+      // Determine tags
+      const matchedTags = [];
+      const lowerText = text.toLowerCase();
+      for (const t of TAGS) {
+        if (lowerText.includes(t.name) || lowerText.includes(t.key)) {
+          matchedTags.push(t.key);
+        }
+      }
+      if (matchedTags.length === 0) matchedTags.push('relax');
+
+      const epRes = await addOrUpdateEpisode({
+        mid: fwdMid,
+        title: epTitle,
+        castboxUrl,
+        tags: matchedTags.join(','),
+      });
+
+      await api.sendMessage({
+        chat_id: chat.id,
+        text:
+          `🎉 <b>اپیزود ${epRes.isNew ? 'جدید با موفقیت اضافه' : 'به‌روزرسانی'} شد!</b>\n\n` +
+          `🎙️ اپیزود: <b>«${epRes.episode.title}»</b> (قسمت ${epRes.episode.orderIndex})\n` +
+          `🔗 کست‌باکس: ${castboxUrl || 'ثبت نشده'}\n` +
+          `🏷️ تگ‌ها: <code>${matchedTags.join(', ')}</code>\n\n` +
+          `👇 <b>مرحله بعد:</b> آهنگ‌های این اپیزود را از کانال فوروارد کنید تا خودکار به این قسمت اضافه و کش شوند!`,
+        parse_mode: 'HTML',
+      });
+      return;
+    }
+  }
+
+  // 2. Handle incoming/forwarded audio (File_ID caching & auto-add tracks)
   if (message.audio) {
     const audio = message.audio;
     const fileId = audio.file_id;
     const audioTitle = audio.title || audio.file_name || '';
-
-    // Support both legacy and modern Bot API 7.0+ forward fields
-    const fwdMid =
-      message.forward_from_message_id ||
-      (message.forward_origin && message.forward_origin.type === 'channel'
-        ? message.forward_origin.message_id
-        : null);
-
-    const fwdChannel =
-      (message.forward_from_chat && message.forward_from_chat.username) ||
-      (message.forward_origin && message.forward_origin.chat && message.forward_origin.chat.username) ||
-      '';
-
-    const isFromChannel = fwdChannel.toLowerCase().includes('playlistpodca');
-    const isAdmin = user.isAdmin || from.id === ADMIN_ID;
-
     const contributor = from.username ? `@${from.username}` : (from.first_name || 'کاربر گرامی');
+
     let matched = false;
     let trackTitle = audioTitle;
+    let addedToEp = null;
 
-    // A) If forwarded from the podcast channel, ANY user or admin can trigger cache
+    // A) If forwarded from the podcast channel, ANY user or admin can trigger cache / add
     if (fwdMid) {
       try {
-        await updateTrackFileId(fwdMid, fileId, contributor);
+        const durationStr = audio.duration
+          ? `${Math.floor(audio.duration / 60)}:${String(audio.duration % 60).padStart(2, '0')}`
+          : '';
+        const sizeStr = audio.file_size
+          ? `, ${(audio.file_size / (1024 * 1024)).toFixed(1)} MB`
+          : '';
+
+        const res = await addOrUpdateTrack({
+          mid: fwdMid,
+          title: audioTitle,
+          status: durationStr ? `${durationStr}${sizeStr}` : '',
+          fileId,
+          contributor,
+        });
+
         matched = true;
+        if (res.isNew && res.episode) {
+          addedToEp = res.episode;
+        }
       } catch {}
     }
 
@@ -96,22 +173,34 @@ export default async function (message) {
     }
 
     if (matched) {
-      await api.sendMessage({
-        chat_id: chat.id,
-        text: `⚡ <b>فایل کش شد:</b> <code>${trackTitle}</code>\n\n❤️ دمت گرم! آیدی <b>${contributor}</b> به عنوان تکمیل‌کننده این قطعه در آرشیو ثبت شد و در کپشن آهنگ برای همه نمایش داده می‌شود.`,
-        parse_mode: 'HTML',
-      });
+      if (addedToEp) {
+        await api.sendMessage({
+          chat_id: chat.id,
+          text:
+            `✨ <b>آهنگ جدید به اپیزود «${addedToEp.title}» اضافه و کش شد!</b>\n\n` +
+            `🎵 عنوان: <code>${trackTitle}</code>\n` +
+            `❤️ حامی: <b>${contributor}</b>\n` +
+            `📊 تعداد قطعات این اپیزود: <b>${addedToEp.trackCount + 1} آهنگ</b>`,
+          parse_mode: 'HTML',
+        });
+      } else {
+        await api.sendMessage({
+          chat_id: chat.id,
+          text: `⚡ <b>فایل کش شد:</b> <code>${trackTitle}</code>\n\n❤️ دمت گرم! آیدی <b>${contributor}</b> به عنوان تکمیل‌کننده این قطعه در آرشیو ثبت شد و در کپشن آهنگ برای همه نمایش داده می‌شود.`,
+          parse_mode: 'HTML',
+        });
+      }
     } else if (isAdmin) {
       await api.sendMessage({
         chat_id: chat.id,
-        text: `⚠️ فایل صوتی دریافت شد، اما در لیست ۶,۸۰۰ قطعه تطبیق داده نشد.\n<i>پیشنهاد: آهنگ را مستقیماً از کانال @Playlistpodcas فوروارد فرمایید.</i>`,
+        text: `⚠️ فایل صوتی دریافت شد، اما در لیست قطعات تطبیق داده نشد.\n<i>پیشنهاد: آهنگ را مستقیماً از کانال @Playlistpodcas فوروارد فرمایید.</i>`,
         parse_mode: 'HTML',
       });
     }
     return;
   }
 
-  // 2. Handle /start command
+  // 3. Handle /start command
   if (text.startsWith('/start')) {
     await setUserState(from.id, 'idle');
 
@@ -134,7 +223,19 @@ export default async function (message) {
     return;
   }
 
-  // 3. Handle Bottom Bar (Chatbox) Buttons
+  // 4. Handle Dedicated @MyLeitner Channel Button
+  if (text.includes('@MyLeitner') || text.includes('MyLeitner') || text === '/channel') {
+    await api.sendMessage({
+      chat_id: chat.id,
+      text: formatMyLeitnerChannel(),
+      parse_mode: 'HTML',
+      reply_markup: myLeitnerKeyboard(),
+      disable_web_page_preview: false,
+    });
+    return;
+  }
+
+  // 5. Handle Bottom Bar (Chatbox) Buttons
   if (text.includes('آهنگ تصادفی فوری') || text.includes('آهنگ تصادفی')) {
     const track = await getRandomTrack();
     if (!track) {
@@ -229,7 +330,7 @@ export default async function (message) {
     return;
   }
 
-  // 4. Handle /panel command (Inline Panel)
+  // 6. Handle /panel command (Inline Panel)
   if (text === '/panel' || text.includes('پنل اینلاین')) {
     await api.sendMessage({
       chat_id: chat.id,
@@ -240,8 +341,8 @@ export default async function (message) {
     return;
   }
 
-  // 5. Handle /about or /links command
-  if (text === '/about' || text === '/links' || text.includes('کانال @MyLeitner')) {
+  // 7. Handle /about or /links command
+  if (text === '/about' || text === '/links') {
     await api.sendMessage({
       chat_id: chat.id,
       text: formatLinks(),
@@ -252,7 +353,7 @@ export default async function (message) {
     return;
   }
 
-  // 6. Handle /stats command (Admin)
+  // 8. Handle /stats command (Admin)
   if (text === '/stats') {
     if (!user.isAdmin && from.id !== ADMIN_ID) return;
     const stats = await getStats();
@@ -265,7 +366,7 @@ export default async function (message) {
     return;
   }
 
-  // 7. Handle /seed (Force refresh by Admin)
+  // 9. Handle /seed (Force refresh by Admin)
   if (text === '/seed') {
     if (!user.isAdmin && from.id !== ADMIN_ID) return;
     await api.sendMessage({ chat_id: chat.id, text: '⏳ در حال به‌روزرسانی اطلاعات اپیزودها و تگ‌ها...' });
@@ -278,7 +379,7 @@ export default async function (message) {
     return;
   }
 
-  // 8. Handle Search query if in 'search' state or plain text
+  // 10. Handle Search query if in 'search' state or plain text
   if (user.state === 'search' || (!text.startsWith('/') && text.length >= 2)) {
     const { episodes: foundEps, tracks: foundTracks } = await searchContent(text, 12);
     const totalFound = foundEps.length + foundTracks.length;

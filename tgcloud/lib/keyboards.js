@@ -243,6 +243,22 @@ export function searchResultsKeyboard(episodes, tracks) {
   return { inline_keyboard: keyboard };
 }
 
+export function myLeitnerKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: '🚀 عضویت در کانال @MyLeitner', url: 'https://t.me/MyLeitner' },
+      ],
+      [
+        { text: '💬 ارتباط با ادمین', url: 'https://t.me/Mohsenniksirat' },
+      ],
+      [
+        { text: '🏠 بازگشت به منوی اصلی', callback_data: 'm:menu' },
+      ],
+    ],
+  };
+}
+
 export function developerKeyboard() {
   return {
     inline_keyboard: [

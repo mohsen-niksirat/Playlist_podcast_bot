@@ -71,6 +71,18 @@ export function formatInlinePanel() {
   );
 }
 
+export function formatMyLeitnerChannel() {
+  return (
+    `📢 <b>کانال تلگرام مای لیتنر (@MyLeitner)</b>\n\n` +
+    `مرجع تخصصی معرفی <b>برترین اپلیکیشن‌ها، ابزارهای هوش مصنوعی، بات‌ها و اخبار تکنولوژی</b> 📱🚀\n\n` +
+    `🔹 معرفی کاربردی‌ترین برنامه‌ها و ابزارهای دنیای اینترنت\n` +
+    `🔹 پروژه‌ها و ترفندهای هوش مصنوعی و تلگرام\n` +
+    `🔹 اخبار و آموزش‌های تکنولوژی\n\n` +
+    `👇 <b>برای عضویت در کانال روی لینک زیر کلیک کنید:</b>\n` +
+    `👉 <a href="https://t.me/MyLeitner">@MyLeitner</a>`
+  );
+}
+
 export function formatDeveloperInfo() {
   return (
     `👨‍💻 <b>درباره توسعه‌دهنده ربات:</b>\n\n` +

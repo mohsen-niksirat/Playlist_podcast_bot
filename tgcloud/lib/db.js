@@ -160,6 +160,72 @@ export async function updateTrackFileId(trackMid, fileId, contributor = null) {
   await db.update(tracks).set(patch).where(eq(tracks.mid, trackMid)).run();
 }
 
+export async function addOrUpdateEpisode({ mid, title, castboxUrl = '', tags = '' }) {
+  const existing = await db.select().from(episodes).where(eq(episodes.mid, mid)).get();
+  if (existing) {
+    await db.update(episodes).set({ title, castboxUrl, tags }).where(eq(episodes.mid, mid)).run();
+    return { isNew: false, episode: existing };
+  }
+
+  const maxRow = await db.select({ max: sql`max(order_index)` }).from(episodes).get();
+  const nextOrder = (maxRow && maxRow.max ? Number(maxRow.max) : 314) + 1;
+
+  const [created] = await db
+    .insert(episodes)
+    .values({
+      mid,
+      title,
+      castboxUrl,
+      tags,
+      trackCount: 0,
+      orderIndex: nextOrder,
+    })
+    .returning()
+    .run();
+
+  return { isNew: true, episode: created };
+}
+
+export async function addOrUpdateTrack({ mid, title, status = '', fileId = null, contributor = null }) {
+  const existing = await db.select().from(tracks).where(eq(tracks.mid, mid)).get();
+  if (existing) {
+    const patch = { fileId: fileId || existing.fileId };
+    if (contributor) patch.contributor = contributor;
+    await db.update(tracks).set(patch).where(eq(tracks.mid, mid)).run();
+    return { isNew: false, track: existing };
+  }
+
+  // Find latest episode to attach to
+  const latestEp = await db.select().from(episodes).orderBy(desc(episodes.orderIndex)).limit(1).get();
+  const epMid = latestEp ? latestEp.mid : 0;
+  const nextTrackOrder = (latestEp ? latestEp.trackCount : 0) + 1;
+
+  const [created] = await db
+    .insert(tracks)
+    .values({
+      mid,
+      episodeMid: epMid,
+      title,
+      status,
+      fileId,
+      contributor,
+      tags: latestEp ? latestEp.tags : '',
+      orderIndex: nextTrackOrder,
+    })
+    .returning()
+    .run();
+
+  if (latestEp) {
+    await db
+      .update(episodes)
+      .set({ trackCount: latestEp.trackCount + 1 })
+      .where(eq(episodes.mid, epMid))
+      .run();
+  }
+
+  return { isNew: true, track: created, episode: latestEp };
+}
+
 export async function getRandomTracksByTag(tagKey, limit = 5) {
   const pattern = `%${tagKey}%`;
   return db
