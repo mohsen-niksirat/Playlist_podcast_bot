@@ -1,0 +1,12 @@
+# Dependency directories
+node_modules/
+
+# Telegram Serverless credentials & local snapshots (SENSITIVE)
+.tgcloud/
+
+# Environment files
+.env
+.env.*
+
+# Logs
+*.log
