@@ -205,6 +205,11 @@ export default async function (message) {
     if (res) {
       const safeTrackTitle = escapeHtml(trackTitle);
       const safeContributor = escapeHtml(contributor);
+      const playMarkup = {
+        inline_keyboard: [
+          [{ text: '📥 پخش / دریافت مستقیم این آهنگ', callback_data: `tr:${res.track.mid}` }],
+        ],
+      };
 
       if (addedToEp) {
         await api.sendMessage({
@@ -215,6 +220,7 @@ export default async function (message) {
             `❤️ حامی: <b>${safeContributor}</b>\n` +
             `📊 تعداد قطعات این اپیزود: <b>${addedToEp.trackCount + 1} آهنگ</b>`,
           parse_mode: 'HTML',
+          reply_markup: playMarkup,
         });
       } else if (res.wasAlreadyCached && res.originalContributor && !res.contributorSaved) {
         // Track was already cached with an original contributor
@@ -226,8 +232,9 @@ export default async function (message) {
               `💡 <b>این قطعه قبلاً توسط خود شما ثبت و کش شده بود!</b>\n\n` +
               `🎵 عنوان: <code>${safeTrackTitle}</code>\n` +
               `❤️ ثبت‌شده با نام کاربری شما: <b>${safeContributor}</b>\n\n` +
-              `پرچم بالاست! ممنون از حضور و همراهی پرانرژیت در آرشیو 🎧✨`,
+              `پرچم بالاست! برای دریافت و شنیدن آن روی دکمه زیر بزنید: 🎧✨`,
             parse_mode: 'HTML',
+            reply_markup: playMarkup,
           });
         } else {
           await api.sendMessage({
@@ -239,6 +246,7 @@ export default async function (message) {
               `دمت گرم رفیق! با اینکه اعتبار این قطعه متعلق به اولین ارسال‌کننده (<b>${safeOriginal}</b>) است، ولی مشارکت شما برای ما بی‌نهایت ارزشمنده! 🌟\n` +
               `<i>پیشنهاد: آهنگ‌های جدیدتر یا بدون کش را فوروارد کنید تا تگ شما ثبت شود!</i> 😉`,
             parse_mode: 'HTML',
+            reply_markup: playMarkup,
           });
         }
       } else {
@@ -249,6 +257,7 @@ export default async function (message) {
             `⚡ <b>فایل با موفقیت کش شد:</b> <code>${safeTrackTitle}</code>\n\n` +
             `❤️ <b>دمت گرم!</b> آیدی شما <b>${safeContributor}</b> به عنوان اولین حامی این قطعه در آرشیو ثبت شد و برای همیشه در کپشن آهنگ برای همه کاربران نمایش داده می‌شود. 🌟🎧`,
           parse_mode: 'HTML',
+          reply_markup: playMarkup,
         });
       }
     } else if (isAdmin) {
@@ -311,16 +320,26 @@ export default async function (message) {
     }
     const ep = await getEpisodeByMid(track.episodeMid);
 
-    if (track.fileId) {
+    const fileId = track.fileId || track.file_id;
+    if (fileId) {
       try {
         await api.sendAudio({
           chat_id: chat.id,
-          audio: track.fileId,
+          audio: fileId,
           caption: formatTrackCaption(track, ep),
           parse_mode: 'HTML',
         });
         return;
-      } catch {}
+      } catch (err) {
+        try {
+          await api.sendAudio({
+            chat_id: chat.id,
+            audio: fileId,
+            caption: `🎵 ${track.title || 'موسیقی'}\n📢 کانال: @MyLeitner`,
+          });
+          return;
+        } catch {}
+      }
     }
 
     await api.sendMessage({

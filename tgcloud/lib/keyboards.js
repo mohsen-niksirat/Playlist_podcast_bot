@@ -112,7 +112,8 @@ export function tagRandomResultsKeyboard(tagKey, tracks) {
   const keyboard = [];
 
   for (const t of tracks) {
-    const icon = t.fileId ? '📥' : '🎵';
+    const fileId = t.fileId || t.file_id;
+    const icon = fileId ? '📥' : '🎵';
     const cleanTitle = (t.title || 'قطعه موسیقی').slice(0, 36);
     const timeInfo = t.status ? ` [${t.status.split(',')[0].trim()}]` : '';
     keyboard.push([
@@ -169,10 +170,12 @@ export function episodeDetailKeyboard(ep, tracks, backPage = 1) {
 
   // Tracks buttons
   for (const t of tracks) {
-    const icon = t.fileId ? '📥' : '🎵';
+    const fileId = t.fileId || t.file_id;
+    const icon = fileId ? '📥' : '🎵';
     const cleanTitle = (t.title || 'قطعه موسیقی').slice(0, 36);
     const timeInfo = t.status ? ` [${t.status.split(',')[0].trim()}]` : '';
-    const label = `${icon} ${t.orderIndex}. ${cleanTitle}${timeInfo}`;
+    const order = t.orderIndex ?? t.order_index ?? 0;
+    const label = `${icon} ${order}. ${cleanTitle}${timeInfo}`;
     keyboard.push([
       { text: label, callback_data: `tr:${t.mid}` },
     ]);

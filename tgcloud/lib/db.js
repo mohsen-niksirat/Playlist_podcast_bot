@@ -120,6 +120,36 @@ export async function seedDatabaseIfNeeded(forceRefresh = false) {
   return { seeded: true, episodes: SEED_EPISODES.length, tracks: allTracks.length };
 }
 
+export function normalizeTrack(t) {
+  if (!t) return null;
+  const fid = t.fileId || t.file_id || null;
+  return {
+    ...t,
+    fileId: fid,
+    file_id: fid,
+    episodeMid: t.episodeMid ?? t.episode_mid ?? 0,
+    episode_mid: t.episode_mid ?? t.episodeMid ?? 0,
+    orderIndex: t.orderIndex ?? t.order_index ?? 0,
+    order_index: t.order_index ?? t.orderIndex ?? 0,
+  };
+}
+
+export function normalizeEpisode(e) {
+  if (!e) return null;
+  const cb = e.castboxUrl || e.castbox_url || '';
+  const tc = e.trackCount ?? e.track_count ?? 0;
+  const oi = e.orderIndex ?? e.order_index ?? 0;
+  return {
+    ...e,
+    castboxUrl: cb,
+    castbox_url: cb,
+    trackCount: tc,
+    track_count: tc,
+    orderIndex: oi,
+    order_index: oi,
+  };
+}
+
 export async function getEpisodes(page = 1, limit = 10) {
   const countRow = await db.select({ count: sql`count(*)` }).from(episodes).get();
   const totalCount = countRow ? Number(countRow.count) : 0;
@@ -136,7 +166,7 @@ export async function getEpisodes(page = 1, limit = 10) {
     .all();
 
   return {
-    episodes: rows,
+    episodes: rows.map(normalizeEpisode),
     page: safePage,
     totalPages,
     totalCount,
@@ -144,20 +174,23 @@ export async function getEpisodes(page = 1, limit = 10) {
 }
 
 export async function getEpisodeByMid(mid) {
-  return db.select().from(episodes).where(eq(episodes.mid, mid)).get();
+  const row = await db.select().from(episodes).where(eq(episodes.mid, mid)).get();
+  return normalizeEpisode(row);
 }
 
 export async function getTracksByEpisodeMid(epMid) {
-  return db
+  const rows = await db
     .select()
     .from(tracks)
     .where(eq(tracks.episodeMid, epMid))
     .orderBy(asc(tracks.orderIndex))
     .all();
+  return rows.map(normalizeTrack);
 }
 
 export async function getTrackByMid(trackMid) {
-  return db.select().from(tracks).where(eq(tracks.mid, trackMid)).get();
+  const row = await db.select().from(tracks).where(eq(tracks.mid, trackMid)).get();
+  return normalizeTrack(row);
 }
 
 /**
@@ -250,14 +283,15 @@ export async function findMatchingTrack({ mid, performer, title, fileName, durat
   const best = scored[0];
   // Require at least 25 points to guarantee precision
   if (best && best.score >= 25) {
-    return best.track;
+    return normalizeTrack(best.track);
   }
   return null;
 }
 
 export async function updateTrackFileId(trackMid, fileId, contributor = null) {
-  const existing = await db.select().from(tracks).where(eq(tracks.mid, trackMid)).get();
-  if (!existing) return null;
+  const existingRaw = await db.select().from(tracks).where(eq(tracks.mid, trackMid)).get();
+  if (!existingRaw) return null;
+  const existing = normalizeTrack(existingRaw);
 
   const patch = { fileId };
   let contributorSaved = false;
@@ -270,7 +304,7 @@ export async function updateTrackFileId(trackMid, fileId, contributor = null) {
 
   return {
     isNew: false,
-    track: existing,
+    track: { ...existing, fileId, file_id: fileId },
     wasAlreadyCached: Boolean(existing.fileId),
     originalContributor: existing.contributor,
     contributorSaved,
@@ -281,7 +315,7 @@ export async function addOrUpdateEpisode({ mid, title, castboxUrl = '', tags = '
   const existing = await db.select().from(episodes).where(eq(episodes.mid, mid)).get();
   if (existing) {
     await db.update(episodes).set({ title, castboxUrl, tags }).where(eq(episodes.mid, mid)).run();
-    return { isNew: false, episode: existing };
+    return { isNew: false, episode: normalizeEpisode(existing) };
   }
 
   const maxRow = await db.select({ max: sql`max(order_index)` }).from(episodes).get();
@@ -300,12 +334,13 @@ export async function addOrUpdateEpisode({ mid, title, castboxUrl = '', tags = '
     .returning()
     .run();
 
-  return { isNew: true, episode: created };
+  return { isNew: true, episode: normalizeEpisode(created) };
 }
 
 export async function addOrUpdateTrack({ mid, title, status = '', fileId = null, contributor = null }) {
-  const existing = await db.select().from(tracks).where(eq(tracks.mid, mid)).get();
-  if (existing) {
+  const existingRaw = await db.select().from(tracks).where(eq(tracks.mid, mid)).get();
+  if (existingRaw) {
+    const existing = normalizeTrack(existingRaw);
     const patch = { fileId: fileId || existing.fileId };
     let contributorSaved = false;
     // First-come-first-served: only save contributor if not already credited
@@ -316,7 +351,7 @@ export async function addOrUpdateTrack({ mid, title, status = '', fileId = null,
     await db.update(tracks).set(patch).where(eq(tracks.mid, mid)).run();
     return {
       isNew: false,
-      track: existing,
+      track: { ...existing, fileId: patch.fileId, file_id: patch.fileId },
       wasAlreadyCached: Boolean(existing.fileId),
       originalContributor: existing.contributor,
       contributorSaved,
@@ -363,13 +398,14 @@ export async function addOrUpdateTrack({ mid, title, status = '', fileId = null,
 
 export async function getRandomTracksByTag(tagKey, limit = 5) {
   const pattern = `%${tagKey}%`;
-  return db
+  const rows = await db
     .select()
     .from(tracks)
     .where(like(tracks.tags, pattern))
     .orderBy(sql`RANDOM()`)
     .limit(limit)
     .all();
+  return rows.map(normalizeTrack);
 }
 
 export async function getEpisodesByTag(tagKey, page = 1, limit = 10) {
@@ -395,7 +431,7 @@ export async function getEpisodesByTag(tagKey, page = 1, limit = 10) {
     .all();
 
   return {
-    episodes: rows,
+    episodes: rows.map(normalizeEpisode),
     page: safePage,
     totalPages,
     totalCount,
@@ -422,8 +458,8 @@ export async function searchContent(query, limit = 10) {
     .all();
 
   return {
-    episodes: epResults,
-    tracks: trResults,
+    episodes: epResults.map(normalizeEpisode),
+    tracks: trResults.map(normalizeTrack),
   };
 }
 
@@ -434,7 +470,7 @@ export async function getRandomEpisode() {
     .orderBy(sql`RANDOM()`)
     .limit(1)
     .all();
-  return rows && rows.length > 0 ? rows[0] : null;
+  return rows && rows.length > 0 ? normalizeEpisode(rows[0]) : null;
 }
 
 export async function getRandomTrack() {
@@ -444,7 +480,7 @@ export async function getRandomTrack() {
     .orderBy(sql`RANDOM()`)
     .limit(1)
     .all();
-  return rows && rows.length > 0 ? rows[0] : null;
+  return rows && rows.length > 0 ? normalizeTrack(rows[0]) : null;
 }
 
 export async function getStats() {

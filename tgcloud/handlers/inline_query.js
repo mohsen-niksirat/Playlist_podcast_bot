@@ -29,11 +29,12 @@ export default async function (inlineQuery) {
           const tObj = TAGS.find((x) => x.key === tKey);
           const moodTitle = tObj ? `${tObj.icon} آهنگ پیشنهادی (${tObj.name})` : '🎵 آهنگ پیشنهادی';
 
-          if (t.fileId) {
+          const fileId = t.fileId || t.file_id;
+          if (fileId) {
             results.push({
               type: 'audio',
               id: `tr_${t.mid}_${tKey}`,
-              audio_file_id: t.fileId,
+              audio_file_id: fileId,
               caption: formatTrackCaption(t, ep),
               parse_mode: 'HTML',
             });
@@ -82,11 +83,12 @@ export default async function (inlineQuery) {
       // Add found tracks
       for (const t of tracks) {
         const ep = await getEpisodeByMid(t.episodeMid);
-        if (t.fileId) {
+        const fileId = t.fileId || t.file_id;
+        if (fileId) {
           results.push({
             type: 'audio',
             id: `tr_${t.mid}`,
-            audio_file_id: t.fileId,
+            audio_file_id: fileId,
             caption: formatTrackCaption(t, ep),
             parse_mode: 'HTML',
           });

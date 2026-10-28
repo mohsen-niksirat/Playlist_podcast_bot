@@ -135,16 +135,27 @@ export default async function (query) {
     }
     const ep = await getEpisodeByMid(track.episodeMid);
 
-    if (track.fileId) {
+    const fileId = track.fileId || track.file_id;
+    if (fileId) {
       try {
         await api.sendAudio({
           chat_id: chatId,
-          audio: track.fileId,
+          audio: fileId,
           caption: formatTrackCaption(track, ep),
           parse_mode: 'HTML',
         });
         return;
-      } catch {}
+      } catch (err) {
+        console.error('Error sending random audio:', err);
+        try {
+          await api.sendAudio({
+            chat_id: chatId,
+            audio: fileId,
+            caption: `🎵 ${track.title || 'قطعه موسیقی'}\n📢 کانال: @MyLeitner`,
+          });
+          return;
+        } catch {}
+      }
     }
 
     await api.sendMessage({
@@ -432,17 +443,28 @@ export default async function (query) {
     const ep = await getEpisodeByMid(track.episodeMid);
 
     // If cached in telegram with file_id: send actual audio file!
-    if (track.fileId) {
+    const fileId = track.fileId || track.file_id;
+    if (fileId) {
       try {
         await api.sendAudio({
           chat_id: chatId,
-          audio: track.fileId,
+          audio: fileId,
           caption: formatTrackCaption(track, ep),
           parse_mode: 'HTML',
         });
         return;
       } catch (err) {
         console.error('Error sending cached audio:', err);
+        try {
+          await api.sendAudio({
+            chat_id: chatId,
+            audio: fileId,
+            caption: `🎵 ${track.title || 'قطعه موسیقی'}\n📢 کانال: @MyLeitner`,
+          });
+          return;
+        } catch (err2) {
+          console.error('Error in sendAudio fallback retry:', err2);
+        }
       }
     }
 
@@ -473,15 +495,24 @@ export default async function (query) {
     const directLinks = [];
 
     for (const t of tracks) {
-      if (t.fileId) {
+      const fileId = t.fileId || t.file_id;
+      if (fileId) {
         try {
           await api.sendAudio({
             chat_id: chatId,
-            audio: t.fileId,
+            audio: fileId,
             caption: formatTrackCaption(t, ep),
             parse_mode: 'HTML',
           });
-        } catch {}
+        } catch {
+          try {
+            await api.sendAudio({
+              chat_id: chatId,
+              audio: fileId,
+              caption: `🎵 ${t.title || 'قطعه موسیقی'}\n📢 کانال: @MyLeitner`,
+            });
+          } catch {}
+        }
       } else {
         directLinks.push({
           title: t.title,
