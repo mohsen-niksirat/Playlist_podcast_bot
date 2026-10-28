@@ -6,6 +6,8 @@ import {
   getEpisodeByMid,
   getTracksByEpisodeMid,
   getTrackByMid,
+  getCachedSibling,
+  updateTrackFileId,
   getRandomEpisode,
   getRandomTrack,
   getRandomTracksByTag,
@@ -443,7 +445,21 @@ export default async function (query) {
     const ep = await getEpisodeByMid(track.episodeMid);
 
     // If cached in telegram with file_id: send actual audio file!
-    const fileId = track.fileId || track.file_id;
+    let fileId = track.fileId || track.file_id;
+
+    // Sibling lookup: If this track isn't cached under this specific episode row, check if another episode already cached it!
+    if (!fileId && track.title) {
+      const sibling = await getCachedSibling(track.title);
+      if (sibling && (sibling.fileId || sibling.file_id)) {
+        fileId = sibling.fileId || sibling.file_id;
+        // Auto-link fileId and contributor to this track in DB for future queries
+        await updateTrackFileId(track.mid, fileId, sibling.contributor);
+        if (sibling.contributor && !track.contributor) {
+          track.contributor = sibling.contributor;
+        }
+      }
+    }
+
     if (fileId) {
       try {
         await api.sendAudio({
@@ -495,7 +511,16 @@ export default async function (query) {
     const directLinks = [];
 
     for (const t of tracks) {
-      const fileId = t.fileId || t.file_id;
+      let fileId = t.fileId || t.file_id;
+      if (!fileId && t.title) {
+        const sibling = await getCachedSibling(t.title);
+        if (sibling && (sibling.fileId || sibling.file_id)) {
+          fileId = sibling.fileId || sibling.file_id;
+          t.fileId = fileId;
+          if (sibling.contributor) t.contributor = sibling.contributor;
+        }
+      }
+
       if (fileId) {
         try {
           await api.sendAudio({

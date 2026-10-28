@@ -185,11 +185,37 @@ export async function getTracksByEpisodeMid(epMid) {
     .where(eq(tracks.episodeMid, epMid))
     .orderBy(asc(tracks.orderIndex))
     .all();
-  return rows.map(normalizeTrack);
+  const normalized = rows.map(normalizeTrack);
+  for (const t of normalized) {
+    if (!t.fileId && t.title) {
+      const sibling = await getCachedSibling(t.title);
+      if (sibling && sibling.fileId) {
+        t.fileId = sibling.fileId;
+        t.file_id = sibling.fileId;
+        if (sibling.contributor) t.contributor = sibling.contributor;
+      }
+    }
+  }
+  return normalized;
 }
 
 export async function getTrackByMid(trackMid) {
   const row = await db.select().from(tracks).where(eq(tracks.mid, trackMid)).get();
+  return normalizeTrack(row);
+}
+
+/**
+ * Find if the same song title is already cached in another episode.
+ * Over 682 songs appear across multiple episodes in the Playlist archive.
+ */
+export async function getCachedSibling(title) {
+  if (!title) return null;
+  const row = await db
+    .select()
+    .from(tracks)
+    .where(and(eq(tracks.title, title), sql`file_id IS NOT NULL`))
+    .limit(1)
+    .get();
   return normalizeTrack(row);
 }
 
@@ -301,6 +327,22 @@ export async function updateTrackFileId(trackMid, fileId, contributor = null) {
     contributorSaved = true;
   }
   await db.update(tracks).set(patch).where(eq(tracks.mid, trackMid)).run();
+
+  // Global cache propagation: update all sibling tracks with the same title across other episodes
+  try {
+    const siblingPatch = { fileId };
+    const effectiveContributor = existing.contributor || contributor;
+    if (effectiveContributor) {
+      siblingPatch.contributor = effectiveContributor;
+    }
+    await db
+      .update(tracks)
+      .set(siblingPatch)
+      .where(and(eq(tracks.title, existing.title), sql`file_id IS NULL`))
+      .run();
+  } catch (err) {
+    console.error('Error propagating sibling cache:', err);
+  }
 
   return {
     isNew: false,
