@@ -24,6 +24,9 @@ export function mainMenuKeyboard(isAdmin = false) {
 
   if (isAdmin) {
     keyboard.push([
+      { text: '➕ افزودن پادکست جدید (ادمین)', callback_data: 'm:admin_new_ep' },
+    ]);
+    keyboard.push([
       { text: '📊 آمار و وضعیت دیتابیس', callback_data: 'm:stats' },
     ]);
   }
@@ -61,29 +64,61 @@ export function inlinePanelKeyboard() {
   };
 }
 
-export function mainReplyKeyboard() {
-  return {
-    keyboard: [
-      [
-        { text: '🎲 آهنگ تصادفی فوری ⚡' },
-        { text: '🏷️ مودها و سبک‌ها 🎧' },
-      ],
-      [
-        { text: '🎙️ لیست پادکست‌ها' },
-        { text: '🔍 جستجوی آهنگ' },
-      ],
-      [
-        { text: '🌟 ۱۰ اپیزود اخیر' },
-        { text: '📢 کانال @MyLeitner' },
-      ],
-      [
-        { text: '👨‍💻 درباره توسعه‌دهنده' },
-        { text: '🎛️ منوی شیشه‌ای کامل' },
-      ],
+export function mainReplyKeyboard(isAdmin = false) {
+  const rows = [];
+
+  if (isAdmin) {
+    rows.push([
+      { text: '➕ افزودن پادکست جدید' },
+      { text: '📊 وضعیت دیتابیس' },
+    ]);
+  }
+
+  rows.push(
+    [
+      { text: '🎲 آهنگ تصادفی فوری ⚡' },
+      { text: '🏷️ مودها و سبک‌ها 🎧' },
     ],
+    [
+      { text: '🎙️ لیست پادکست‌ها' },
+      { text: '🔍 جستجوی آهنگ' },
+    ],
+    [
+      { text: '🌟 ۱۰ اپیزود اخیر' },
+      { text: '📢 کانال @MyLeitner' },
+    ],
+    [
+      { text: '👨‍💻 درباره توسعه‌دهنده' },
+      { text: '🎛️ منوی شیشه‌ای کامل' },
+    ]
+  );
+
+  return {
+    keyboard: rows,
     resize_keyboard: true,
     is_persistent: false,
     input_field_placeholder: 'انتخاب گزینه یا جستجوی آهنگ...',
+  };
+}
+
+export function awaitingTracksKeyboard() {
+  return {
+    keyboard: [
+      [{ text: '⏹️ اتمام دریافت آهنگ‌ها' }],
+      [{ text: '❌ انصراف' }],
+    ],
+    resize_keyboard: true,
+    input_field_placeholder: 'آهنگ‌ها را فوروارد یا ارسال کنید...',
+  };
+}
+
+export function cancelOnlyKeyboard() {
+  return {
+    keyboard: [
+      [{ text: '❌ انصراف' }],
+    ],
+    resize_keyboard: true,
+    input_field_placeholder: 'نام یا عنوان پادکست جدید را بنویسید...',
   };
 }
 

@@ -12,6 +12,7 @@ import {
   getRandomTrack,
   getRandomTracksByTag,
   getStats,
+  ADMIN_ID,
 } from 'lib/db';
 import {
   mainMenuKeyboard,
@@ -23,6 +24,7 @@ import {
   developerKeyboard,
   inlinePanelKeyboard,
   backToMenuKeyboard,
+  cancelOnlyKeyboard,
 } from 'lib/keyboards';
 import {
   formatWelcome,
@@ -372,7 +374,7 @@ export default async function (query) {
 
   // 10. Stats (Admin)
   if (data === 'm:stats') {
-    if (!user.isAdmin) return;
+    if (!user.isAdmin && from.id !== ADMIN_ID) return;
     const stats = await getStats();
     try {
       await api.editMessageText({
@@ -390,6 +392,26 @@ export default async function (query) {
         reply_markup: backToMenuKeyboard(),
       });
     }
+    return;
+  }
+
+  // 10b. Admin: Add New Episode Wizard (m:admin_new_ep)
+  if (data === 'm:admin_new_ep') {
+    if (!user.isAdmin && from.id !== ADMIN_ID) return;
+    await setUserState(from.id, 'admin_awaiting_podcast_name');
+    await api.sendMessage({
+      chat_id: chatId,
+      text:
+        `➕ <b>افزودن پادکست جدید (مخصوص ادمین)</b>\n\n` +
+        `لطفاً <b>نام یا عنوان پادکست جدید</b> را ارسال نمایید.\n\n` +
+        `<i>💡 مثال‌ها:</i>\n` +
+        `• فقط نام: <code>بیکلام گیتار 5</code>\n` +
+        `• نام همراه لینک Castbox:\n` +
+        `<code>بیکلام گیتار 5 | https://castbox.fm/ep/1019948897</code>\n\n` +
+        `<i>همچنین می‌توانید پست معرفی کانال را مستقیماً همین‌جا فوروارد کنید!</i>`,
+      parse_mode: 'HTML',
+      reply_markup: cancelOnlyKeyboard(),
+    });
     return;
   }
 

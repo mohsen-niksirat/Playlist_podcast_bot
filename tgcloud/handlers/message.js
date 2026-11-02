@@ -13,6 +13,9 @@ import {
   getRandomEpisode,
   getRandomTrack,
   getEpisodeByMid,
+  getEpisodeTracksCount,
+  getActiveEpisodeMid,
+  setActiveEpisodeMid,
   ADMIN_ID,
   TAGS,
 } from 'lib/db';
@@ -27,6 +30,8 @@ import {
   trackDeliveryKeyboard,
   myLeitnerKeyboard,
   backToMenuKeyboard,
+  awaitingTracksKeyboard,
+  cancelOnlyKeyboard,
 } from 'lib/keyboards';
 import {
   formatWelcome,
@@ -58,6 +63,48 @@ export default async function (message) {
   const { user } = await getOrCreateUser(from);
   const isAdmin = user.isAdmin || from.id === ADMIN_ID;
 
+  // Handle cancellation commands
+  if (text === '❌ انصراف' || text === '/cancel') {
+    if (user.state && user.state.startsWith('admin_')) {
+      await setUserState(from.id, 'idle');
+      await setActiveEpisodeMid(null);
+      await api.sendMessage({
+        chat_id: chat.id,
+        text: '❌ عملیات مدیریت پادکست لغو شد و به حالت عادی بازگشتید.',
+        reply_markup: mainReplyKeyboard(isAdmin),
+      });
+      return;
+    }
+    if (user.state === 'search') {
+      await setUserState(from.id, 'idle');
+      await api.sendMessage({
+        chat_id: chat.id,
+        text: '🔍 جستجو لغو شد.',
+        reply_markup: mainReplyKeyboard(isAdmin),
+      });
+      return;
+    }
+  }
+
+  // Admin Feature: Add New Episode via Menu or Command
+  if (isAdmin && (text === '➕ افزودن پادکست جدید' || text === '/newpodcast' || text === '/addepisode')) {
+    await setUserState(from.id, 'admin_awaiting_podcast_name');
+    await api.sendMessage({
+      chat_id: chat.id,
+      text:
+        `➕ <b>افزودن پادکست جدید (مخصوص ادمین)</b>\n\n` +
+        `لطفاً <b>نام یا عنوان پادکست جدید</b> را وارد و ارسال کنید.\n\n` +
+        `<i>💡 مثال‌ها:</i>\n` +
+        `• فقط نام: <code>بیکلام گیتار 5</code>\n` +
+        `• نام همراه لینک کست‌باکس:\n` +
+        `<code>بیکلام گیتار 5 | https://castbox.fm/ep/1019948897</code>\n\n` +
+        `<i>همچنین می‌توانید پست معرفی کانال را مستقیماً فوروارد کنید!</i>`,
+      parse_mode: 'HTML',
+      reply_markup: cancelOnlyKeyboard(),
+    });
+    return;
+  }
+
   // Support both legacy and modern Bot API 7.0+ forward fields
   const fwdMid =
     message.forward_from_message_id ||
@@ -88,8 +135,97 @@ export default async function (message) {
     captionLower.includes('playlistpodca') ||
     isFromMokhtar;
 
+  // Admin State: Awaiting podcast name
+  if (isAdmin && user.state === 'admin_awaiting_podcast_name' && !message.audio) {
+    let epTitle = '';
+    let castboxUrl = '';
+    const matchedMid = fwdMid || null;
+
+    const mQuote = text.match(/["«“]([\s\S]+?)["»”]/);
+    const cbMatch = text.match(/https?:\/\/castbox\.fm\/[^\s\n]+/i);
+    if (cbMatch) castboxUrl = cbMatch[0];
+
+    if (mQuote && mQuote[1].trim().length >= 2) {
+      epTitle = mQuote[1].trim().replace(/\s+/g, ' ');
+    } else if (text.includes('|')) {
+      const parts = text.split('|');
+      epTitle = parts[0].trim();
+      if (!castboxUrl && parts[1]) {
+        const p2Match = parts[1].match(/https?:\/\/castbox\.fm\/[^\s\n]+/i);
+        if (p2Match) castboxUrl = p2Match[0];
+      }
+    } else {
+      const firstLine = text.split('\n')[0].replace(/[🔥📌✨🎙️"«»”]/g, '').trim();
+      epTitle = firstLine.slice(0, 60) || 'اپیزود جدید';
+    }
+
+    const matchedTags = [];
+    const searchArea = (epTitle + ' ' + text).toLowerCase();
+    for (const t of TAGS) {
+      if (searchArea.includes(t.name) || searchArea.includes(t.key)) {
+        matchedTags.push(t.key);
+      }
+    }
+    if (searchArea.includes('گیتار') || searchArea.includes('guitar') || searchArea.includes('بیکلام') || searchArea.includes('ساز')) {
+      if (!matchedTags.includes('instrumental')) matchedTags.push('instrumental');
+    }
+    if (matchedTags.length === 0) matchedTags.push('relax');
+
+    const epRes = await addOrUpdateEpisode({
+      mid: matchedMid,
+      title: epTitle,
+      castboxUrl,
+      tags: matchedTags.join(','),
+    });
+
+    const epMid = epRes.episode.mid;
+    await setActiveEpisodeMid(epMid);
+    await setUserState(from.id, `admin_awaiting_tracks:${epMid}`);
+
+    await api.sendMessage({
+      chat_id: chat.id,
+      text:
+        `🎉 <b>پادکست جدید با موفقیت ثبت شد!</b>\n\n` +
+        `🎙️ عنوان: <b>«${escapeHtml(epRes.episode.title)}»</b> (قسمت ${epRes.episode.orderIndex})\n` +
+        `🔗 کست‌باکس: ${castboxUrl || 'ثبت نشده'}\n` +
+        `🏷️ تگ‌ها: <code>${escapeHtml(matchedTags.join(', '))}</code>\n\n` +
+        `📥 <b>حالت دریافت فایل‌های صوتی فعال شد:</b>\n` +
+        `اکنون آهنگ‌های این پادکست را فوروارد یا ارسال نمایید.\n` +
+        `هر آهنگی که بفرستید بلافاصله به این پادکست متصل و کش می‌شود.\n\n` +
+        `پس از اتمام ارسال تمام قطعات، دکمه <b>«⏹️ اتمام دریافت آهنگ‌ها»</b> را بزنید.`,
+      parse_mode: 'HTML',
+      reply_markup: awaitingTracksKeyboard(),
+    });
+    return;
+  }
+
+  // Admin State: Awaiting tracks (Finish button)
+  if (isAdmin && user.state && user.state.startsWith('admin_awaiting_tracks:')) {
+    const targetMid = parseInt(user.state.replace('admin_awaiting_tracks:', ''), 10);
+
+    if (text === '⏹️ اتمام دریافت آهنگ‌ها' || text === '/done' || text === '/finish') {
+      const ep = await getEpisodeByMid(targetMid);
+      const epTracksCount = await getEpisodeTracksCount(targetMid);
+
+      await setUserState(from.id, 'idle');
+      await setActiveEpisodeMid(null);
+
+      await api.sendMessage({
+        chat_id: chat.id,
+        text:
+          `🏁 <b>عملیات دریافت و کش آهنگ‌ها به پایان رسید!</b>\n\n` +
+          `🎙️ پادکست: <b>«${escapeHtml(ep ? ep.title : 'جدید')}»</b>\n` +
+          `🎵 تعداد کل آهنگ‌های ثبت و کش شده: <b>${epTracksCount} قطعه</b>\n\n` +
+          `هم‌اکنون کاربران می‌توانند این پادکست و قطعات آن را در ربات بشنوند و دانلود کنند. ✨🎧`,
+        parse_mode: 'HTML',
+        reply_markup: mainReplyKeyboard(isAdmin),
+      });
+      return;
+    }
+  }
+
   // 1. Admin Feature: Add New Episode by forwarding announcement post from channel
-  if (isAdmin && fwdMid && !message.audio) {
+  if (isAdmin && !message.audio) {
     const isEpPost =
       text.includes('پلی لیست') ||
       text.includes('پلی‌لیست') ||
@@ -97,14 +233,14 @@ export default async function (message) {
       text.includes('قسمت') ||
       text.toLowerCase().includes('castbox');
 
-    if (isEpPost) {
+    if (isEpPost && (fwdMid || isFromChannel || text.includes('منتشر شد'))) {
       let epTitle = '';
       const mQuote = text.match(/["«“]([\s\S]+?)["»”]/);
       if (mQuote && mQuote[1].trim().length >= 2) {
         epTitle = mQuote[1].trim().replace(/\s+/g, ' ');
       } else {
         const firstLine = text.split('\n')[0].replace(/[🔥📌✨🎙️"«»”]/g, '').trim();
-        epTitle = firstLine.slice(0, 40) || 'اپیزود جدید';
+        epTitle = firstLine.slice(0, 50) || 'اپیزود جدید';
       }
 
       // Extract castbox url if present
@@ -113,11 +249,14 @@ export default async function (message) {
 
       // Determine tags
       const matchedTags = [];
-      const lowerText = text.toLowerCase();
+      const lowerText = (epTitle + ' ' + text).toLowerCase();
       for (const t of TAGS) {
         if (lowerText.includes(t.name) || lowerText.includes(t.key)) {
           matchedTags.push(t.key);
         }
+      }
+      if (lowerText.includes('گیتار') || lowerText.includes('guitar') || lowerText.includes('بیکلام') || lowerText.includes('ساز')) {
+        if (!matchedTags.includes('instrumental')) matchedTags.push('instrumental');
       }
       if (matchedTags.length === 0) matchedTags.push('relax');
 
@@ -128,15 +267,22 @@ export default async function (message) {
         tags: matchedTags.join(','),
       });
 
+      const epMid = epRes.episode.mid;
+      await setActiveEpisodeMid(epMid);
+      await setUserState(from.id, `admin_awaiting_tracks:${epMid}`);
+
       await api.sendMessage({
         chat_id: chat.id,
         text:
-          `🎉 <b>اپیزود ${epRes.isNew ? 'جدید با موفقیت اضافه' : 'به‌روزرسانی'} شد!</b>\n\n` +
+          `🎉 <b>پست معرفی پادکست با هوشمندی تشخیص داده شد!</b>\n\n` +
           `🎙️ اپیزود: <b>«${escapeHtml(epRes.episode.title)}»</b> (قسمت ${epRes.episode.orderIndex})\n` +
           `🔗 کست‌باکس: ${castboxUrl || 'ثبت نشده'}\n` +
           `🏷️ تگ‌ها: <code>${escapeHtml(matchedTags.join(', '))}</code>\n\n` +
-          `👇 <b>مرحله بعد:</b> آهنگ‌های این اپیزود را از کانال فوروارد کنید تا خودکار به این قسمت اضافه و کش شوند!`,
+          `👇 <b>حالت دریافت و کش آهنگ‌ها فعال شد:</b>\n` +
+          `اکنون آهنگ‌های این پادکست را فوروارد یا ارسال کنید تا مستقیماً به همین پادکست متصل و کش شوند.\n` +
+          `پس از اتمام، روی دکمه <b>«⏹️ اتمام دریافت آهنگ‌ها»</b> بزنید.`,
         parse_mode: 'HTML',
+        reply_markup: awaitingTracksKeyboard(),
       });
       return;
     }
@@ -152,6 +298,53 @@ export default async function (message) {
     let res = null;
     let trackTitle = audioTitle;
     let addedToEp = null;
+
+    // Check if admin is currently in awaiting_tracks mode, or if active_episode_mid is set
+    let targetEpisodeMid = null;
+    if (isAdmin) {
+      if (user.state && user.state.startsWith('admin_awaiting_tracks:')) {
+        targetEpisodeMid = parseInt(user.state.replace('admin_awaiting_tracks:', ''), 10);
+      } else {
+        targetEpisodeMid = await getActiveEpisodeMid();
+      }
+    }
+
+    if (targetEpisodeMid) {
+      const durationStr = audio.duration
+        ? `${Math.floor(audio.duration / 60)}:${String(audio.duration % 60).padStart(2, '0')}`
+        : '';
+      const sizeStr = audio.file_size
+        ? `, ${(audio.file_size / (1024 * 1024)).toFixed(1)} MB`
+        : '';
+      const fullTitle = audio.performer && audio.title ? `${audio.performer} – ${audio.title}` : audioTitle;
+
+      const ep = await getEpisodeByMid(targetEpisodeMid);
+      const epTitle = ep ? ep.title : 'جدید';
+
+      res = await addOrUpdateTrack({
+        mid: fwdMid,
+        episodeMid: targetEpisodeMid,
+        title: fullTitle,
+        status: durationStr ? `${durationStr}${sizeStr}` : '',
+        fileId,
+        contributor,
+      });
+
+      const currentTracksCount = await getEpisodeTracksCount(targetEpisodeMid);
+
+      await api.sendMessage({
+        chat_id: chat.id,
+        text:
+          `✅ <b>آهنگ کش و به پادکست متصل شد!</b>\n\n` +
+          `🎵 <code>${escapeHtml(fullTitle)}</code>\n` +
+          `🎙️ پادکست: <b>«${escapeHtml(epTitle)}»</b>\n` +
+          `📊 تعداد قطعات ثبت‌شده تا اکنون: <b>${currentTracksCount} قطعه</b>\n\n` +
+          `<i>آهنگ بعدی را بفرستید، یا در صورت پایان روی دکمه زیر بزنید:</i>`,
+        parse_mode: 'HTML',
+        reply_markup: awaitingTracksKeyboard(),
+      });
+      return;
+    }
 
     // A) Smart Multi-Factor Matcher (Fingerprints by Title, Artist, Duration, Size, and MID)
     // Matches accurately even if forwarded from personal chats (e.g. Mokhtar Razmjoo PV)
@@ -285,7 +478,7 @@ export default async function (message) {
       chat_id: chat.id,
       text: formatWelcome(from.first_name),
       parse_mode: 'HTML',
-      reply_markup: mainMenuKeyboard(user.isAdmin),
+      reply_markup: mainMenuKeyboard(isAdmin),
       disable_web_page_preview: true,
     });
 
@@ -294,7 +487,7 @@ export default async function (message) {
       chat_id: chat.id,
       text: `👇 <b>کلیدهای دسترسی سریع</b> در نوار چت‌باکس شما فعال شد:`,
       parse_mode: 'HTML',
-      reply_markup: mainReplyKeyboard(),
+      reply_markup: mainReplyKeyboard(isAdmin),
     });
     return;
   }
@@ -440,8 +633,8 @@ export default async function (message) {
   }
 
   // 8. Handle /stats command (Admin)
-  if (text === '/stats') {
-    if (!user.isAdmin && from.id !== ADMIN_ID) return;
+  if (text === '/stats' || text.includes('وضعیت دیتابیس')) {
+    if (!isAdmin) return;
     const stats = await getStats();
     await api.sendMessage({
       chat_id: chat.id,

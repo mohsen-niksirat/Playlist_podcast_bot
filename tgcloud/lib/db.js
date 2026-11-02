@@ -50,6 +50,37 @@ export async function getUser(tgId) {
   return db.select().from(users).where(eq(users.tgId, tgId)).get();
 }
 
+export async function getSetting(key) {
+  const row = await db.select().from(settings).where(eq(settings.key, key)).get();
+  return row ? row.value : null;
+}
+
+export async function setSetting(key, value) {
+  if (value === null || value === undefined) {
+    await db.delete(settings).where(eq(settings.key, key)).run();
+    return;
+  }
+  const existing = await db.select().from(settings).where(eq(settings.key, key)).get();
+  if (existing) {
+    await db.update(settings).set({ value: String(value) }).where(eq(settings.key, key)).run();
+  } else {
+    await db.insert(settings).values({ key, value: String(value) }).run();
+  }
+}
+
+export async function getActiveEpisodeMid() {
+  const val = await getSetting('active_episode_mid');
+  return val ? parseInt(val, 10) : null;
+}
+
+export async function setActiveEpisodeMid(mid) {
+  if (!mid) {
+    await setSetting('active_episode_mid', null);
+  } else {
+    await setSetting('active_episode_mid', String(mid));
+  }
+}
+
 let isDbSeeded = false;
 
 export async function seedDatabaseIfNeeded(forceRefresh = false) {
@@ -353,11 +384,22 @@ export async function updateTrackFileId(trackMid, fileId, contributor = null) {
   };
 }
 
-export async function addOrUpdateEpisode({ mid, title, castboxUrl = '', tags = '' }) {
-  const existing = await db.select().from(episodes).where(eq(episodes.mid, mid)).get();
+export async function getEpisodeTracksCount(episodeMid) {
+  const row = await db.select({ count: sql`count(*)` }).from(tracks).where(eq(tracks.episodeMid, episodeMid)).get();
+  return row ? Number(row.count) : 0;
+}
+
+export async function addOrUpdateEpisode({ mid = null, title, castboxUrl = '', tags = '' }) {
+  let safeMid = mid;
+  if (!safeMid) {
+    const maxMidRow = await db.select({ max: sql`max(mid)` }).from(episodes).get();
+    safeMid = (maxMidRow && maxMidRow.max ? Number(maxMidRow.max) : 8544) + 10;
+  }
+
+  const existing = await db.select().from(episodes).where(eq(episodes.mid, safeMid)).get();
   if (existing) {
-    await db.update(episodes).set({ title, castboxUrl, tags }).where(eq(episodes.mid, mid)).run();
-    return { isNew: false, episode: normalizeEpisode(existing) };
+    await db.update(episodes).set({ title, castboxUrl, tags }).where(eq(episodes.mid, safeMid)).run();
+    return { isNew: false, episode: normalizeEpisode({ ...existing, title, castboxUrl, tags }) };
   }
 
   const maxRow = await db.select({ max: sql`max(order_index)` }).from(episodes).get();
@@ -366,7 +408,7 @@ export async function addOrUpdateEpisode({ mid, title, castboxUrl = '', tags = '
   const [created] = await db
     .insert(episodes)
     .values({
-      mid,
+      mid: safeMid,
       title,
       castboxUrl,
       tags,
@@ -379,8 +421,9 @@ export async function addOrUpdateEpisode({ mid, title, castboxUrl = '', tags = '
   return { isNew: true, episode: normalizeEpisode(created) };
 }
 
-export async function addOrUpdateTrack({ mid, title, status = '', fileId = null, contributor = null }) {
-  const existingRaw = await db.select().from(tracks).where(eq(tracks.mid, mid)).get();
+export async function addOrUpdateTrack({ mid = null, title, status = '', fileId = null, contributor = null, episodeMid = null }) {
+  const safeMid = mid || (Math.floor(Date.now() / 1000) + Math.floor(Math.random() * 10000));
+  const existingRaw = await db.select().from(tracks).where(eq(tracks.mid, safeMid)).get();
   if (existingRaw) {
     const existing = normalizeTrack(existingRaw);
     const patch = { fileId: fileId || existing.fileId };
@@ -390,48 +433,62 @@ export async function addOrUpdateTrack({ mid, title, status = '', fileId = null,
       patch.contributor = contributor;
       contributorSaved = true;
     }
-    await db.update(tracks).set(patch).where(eq(tracks.mid, mid)).run();
+    if (episodeMid && existing.episodeMid !== episodeMid) {
+      patch.episodeMid = episodeMid;
+    }
+    await db.update(tracks).set(patch).where(eq(tracks.mid, safeMid)).run();
     return {
       isNew: false,
-      track: { ...existing, fileId: patch.fileId, file_id: patch.fileId },
+      track: { ...existing, ...patch, file_id: patch.fileId },
       wasAlreadyCached: Boolean(existing.fileId),
       originalContributor: existing.contributor,
       contributorSaved,
     };
   }
 
-  // Find latest episode to attach to
-  const latestEp = await db.select().from(episodes).orderBy(desc(episodes.orderIndex)).limit(1).get();
-  const epMid = latestEp ? latestEp.mid : 0;
-  const nextTrackOrder = (latestEp ? latestEp.trackCount : 0) + 1;
+  // Find target episode to attach to:
+  // 1. Explicit episodeMid passed in argument
+  // 2. Active episode mid from settings (set during admin wizard / channel forward)
+  // 3. Fallback to latest episode by orderIndex
+  let targetEp = null;
+  const targetEpMid = episodeMid || (await getActiveEpisodeMid());
+  if (targetEpMid) {
+    targetEp = await db.select().from(episodes).where(eq(episodes.mid, targetEpMid)).get();
+  }
+  if (!targetEp) {
+    targetEp = await db.select().from(episodes).orderBy(desc(episodes.orderIndex)).limit(1).get();
+  }
+
+  const epMid = targetEp ? targetEp.mid : 0;
+  const nextTrackOrder = (targetEp ? targetEp.trackCount : 0) + 1;
 
   const [created] = await db
     .insert(tracks)
     .values({
-      mid,
+      mid: safeMid,
       episodeMid: epMid,
       title,
       status,
       fileId,
       contributor,
-      tags: latestEp ? latestEp.tags : '',
+      tags: targetEp ? targetEp.tags : '',
       orderIndex: nextTrackOrder,
     })
     .returning()
     .run();
 
-  if (latestEp) {
+  if (targetEp) {
     await db
       .update(episodes)
-      .set({ trackCount: latestEp.trackCount + 1 })
+      .set({ trackCount: targetEp.trackCount + 1 })
       .where(eq(episodes.mid, epMid))
       .run();
   }
 
   return {
     isNew: true,
-    track: created,
-    episode: latestEp,
+    track: normalizeTrack(created),
+    episode: targetEp ? normalizeEpisode(targetEp) : null,
     wasAlreadyCached: false,
     originalContributor: null,
     contributorSaved: Boolean(contributor),

@@ -10,3 +10,8 @@ node_modules/
 
 # Logs
 *.log
+
+# Channel exports & raw data dumps
+ChatExport_*
+parse_export.*
+
